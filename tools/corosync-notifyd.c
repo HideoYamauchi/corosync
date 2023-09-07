@@ -228,9 +228,15 @@ static void _cs_cmap_members_key_changed (
 	int res;
 	uint32_t nodeid;
 	char *ip_str;
+	char *name_str = NULL;
 	char tmp_key[CMAP_KEYNAME_MAXLEN];
 	cs_error_t err;
 	int no_retries;
+	cmap_iter_handle_t iter_handle;
+	char iter_key_name[CMAP_KEYNAME_MAXLEN + 1];
+	size_t value_len;
+	cmap_value_types_t type;
+	uint32_t node_pos, iter_nodeid;
 
 	if (event != CMAP_TRACK_ADD && event != CMAP_TRACK_MODIFY) {
 		return ;
@@ -263,6 +269,41 @@ static void _cs_cmap_members_key_changed (
 	if (err != CS_OK) {
 		return ;
 	}
+
+	err = cmap_iter_init(cmap_handle, "nodelist.node.", &iter_handle);
+	if (err != CS_OK) {
+		qb_log(LOG_ERR, "Failed to initialize nodelist node iterator. Error %s\n", cs_strerror(err));
+	} else {
+		while ((err = cmap_iter_next(cmap_handle, iter_handle, iter_key_name, &value_len, &type)) == CS_OK) {
+			res = sscanf(iter_key_name, "nodelist.node.%u.%s", &node_pos, tmp_key);
+			if (res != 2) {
+				continue;
+			}
+
+			if (strcmp(tmp_key, "nodeid") != 0) {
+				continue;
+			}
+
+			snprintf(tmp_key, CMAP_KEYNAME_MAXLEN, "nodelist.node.%u.nodeid", node_pos);
+			if (cmap_get_uint32(cmap_handle, tmp_key, &iter_nodeid) != CS_OK) {
+				continue;
+			}
+			if (iter_nodeid != nodeid) {
+				continue;
+			}
+
+			snprintf(tmp_key, CMAP_KEYNAME_MAXLEN, "nodelist.node.%u.name", node_pos);
+			if (cmap_get_string(cmap_handle, tmp_key, &name_str) != CS_OK) {
+				continue;
+			}
+			if (!name_str) {
+				continue;
+			}
+			break;
+		}
+		cmap_iter_finalize(cmap_handle, iter_handle);
+	}
+
 	/*
 	 * We want the ip out of: "r(0) ip(192.168.100.92)"
 	 */
@@ -279,6 +320,7 @@ static void _cs_cmap_members_key_changed (
 		free(ip_str);
 		return ;
 	}
+
 	*close_bracket = '\0';
 	if(conf[CS_NTF_NODNS]) {
 		strncpy(nodename, open_bracket, CS_MAX_NAME_LENGTH-1);
@@ -287,9 +329,14 @@ static void _cs_cmap_members_key_changed (
 		if (res) {
 			strncpy(nodename, open_bracket, CS_MAX_NAME_LENGTH-1);
 		}
+
+		if (strcmp(open_bracket, nodename) == 0 && name_str) {
+			strncpy(nodename, name_str, CS_MAX_NAME_LENGTH-1);
+		}
 	}
 	_cs_node_membership_event(nodename, nodeid, (char *)new_value.data, open_bracket);
 	free(ip_str);
+	free(name_str);
 }
 
 static void _cs_cmap_connections_key_changed (
